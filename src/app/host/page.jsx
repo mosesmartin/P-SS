@@ -22,7 +22,12 @@ import {
   ExternalLink,
   Lock,
   Globe,
-  RefreshCw
+  Settings,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Sparkles,
+  Cast
 } from 'lucide-react';
 
 export default function HostDashboard() {
@@ -42,6 +47,7 @@ export default function HostDashboard() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
+  const [cinemaMode, setCinemaMode] = useState(false);
 
   // Refs
   const videoRef = useRef(null);
@@ -74,19 +80,16 @@ export default function HostDashboard() {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[Host] Connected to signaling server with ID:', socket.id);
       socket.emit('join-room', { roomId, role: 'host' });
       setConnectionState('waiting');
     });
 
     socket.on('peer-joined', ({ peerId, role }) => {
-      console.log('[Host] Peer joined:', peerId, role);
       setPeerRole(role);
       setConnectionState('connected');
     });
 
     socket.on('peer-left', () => {
-      console.log('[Host] Peer disconnected');
       setConnectionState('waiting');
       setStreamActive(false);
       if (videoRef.current) {
@@ -94,19 +97,17 @@ export default function HostDashboard() {
       }
     });
 
-    // Initialize RTCPeerConnection with ICE candidate queueing
     const pc = createPeerConnection(
       (candidate) => {
         socket.emit('ice-candidate', { roomId, candidate });
       },
       (event) => {
-        console.log('[Host] Remote track received:', event.track.kind, event.streams);
         const stream = event.streams[0] || new MediaStream([event.track]);
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.muted = true;
-          videoRef.current.play().catch((e) => console.warn('[Host] Auto-play prevented:', e));
+          videoRef.current.play().catch((e) => console.warn('[Host] Auto-play warning:', e));
 
           setStreamActive(true);
           setConnectionState('streaming');
@@ -122,7 +123,6 @@ export default function HostDashboard() {
         }
       },
       (state) => {
-        console.log('[Host] Connection state:', state);
         if (state === 'connected') {
           setConnectionState('streaming');
         } else if (state === 'disconnected' || state === 'failed') {
@@ -133,42 +133,34 @@ export default function HostDashboard() {
     );
     pcRef.current = pc;
 
-    // Handle SDP Offer from Sender with ICE Queue Flushing
     socket.on('offer', async ({ offer }) => {
       try {
-        console.log('[Host] Processing WebRTC Offer from sender...');
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         
-        // Flush any queued ICE candidates
         while (iceCandidatesQueueRef.current.length > 0) {
           const queuedCandidate = iceCandidatesQueueRef.current.shift();
           try {
             await pc.addIceCandidate(new RTCIceCandidate(queuedCandidate));
-            console.log('[Host] Flushed queued ICE candidate');
           } catch (iceErr) {
-            console.warn('[Host] Failed to add queued ICE candidate:', iceErr);
+            console.warn('[Host] Failed adding queued candidate:', iceErr);
           }
         }
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('answer', { roomId, answer });
-        console.log('[Host] Created and sent Answer to sender');
       } catch (err) {
         console.error('[Host] Error processing offer:', err);
       }
     });
 
-    // Handle incoming ICE Candidate with queueing fallback
     socket.on('ice-candidate', async ({ candidate }) => {
       try {
         if (!candidate) return;
         if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } else {
-          // Queue candidate until remote description is applied
           iceCandidatesQueueRef.current.push(candidate);
-          console.log('[Host] Queued ICE candidate (waiting for remote description)');
         }
       } catch (err) {
         console.error('[Host] Error adding ICE candidate:', err);
@@ -241,7 +233,7 @@ export default function HostDashboard() {
     const image = canvas.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = image;
-    a.download = `screen-snapshot-${new Date().toISOString().slice(0, 19)}.png`;
+    a.download = `castqr-snapshot-${new Date().toISOString().slice(0, 19)}.png`;
     a.click();
   };
 
@@ -264,7 +256,7 @@ export default function HostDashboard() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `screen-recording-${new Date().toISOString().slice(0, 19)}.webm`;
+        a.download = `castqr-recording-${new Date().toISOString().slice(0, 19)}.webm`;
         a.click();
         URL.revokeObjectURL(url);
       };
@@ -281,285 +273,294 @@ export default function HostDashboard() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <Navbar />
-
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-slate-800/80">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-              <Monitor className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                Host Monitor Dashboard
-                <span className="text-xs font-mono font-normal px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                  Room: {roomId || '...'}
-                </span>
-              </h1>
-              <p className="text-xs text-slate-400">
-                Scan QR code below from your phone/sender to mirror screen here in real-time.
-              </p>
+    <div className="flex flex-col h-screen overflow-hidden bg-[#060911] text-slate-100 selection:bg-indigo-500 selection:text-white">
+      {/* Top Header Bar */}
+      <header className="h-14 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl px-4 flex items-center justify-between shrink-0 z-50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-cyan-400 p-0.5 flex items-center justify-center shadow-md shadow-indigo-500/20">
+            <div className="w-full h-full bg-slate-950 rounded-[6px] flex items-center justify-center">
+              <Cast className="w-4 h-4 text-cyan-400" />
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-sm text-white tracking-tight">
+              Cast<span className="text-cyan-400">QR</span>
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700 font-mono">
+              Room: {roomId || '...'}
+            </span>
+          </div>
+        </div>
 
-          <div className="flex items-center gap-2.5">
-            <div
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border ${
+        {/* Status Center Badges */}
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+              streamActive
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-sm shadow-emerald-500/20'
+                : connectionState === 'connected'
+                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
                 streamActive
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  ? 'bg-emerald-400 animate-ping'
                   : connectionState === 'connected'
-                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                  ? 'bg-cyan-400'
+                  : 'bg-amber-400 animate-pulse'
+              }`}
+            ></span>
+            <span className="text-[11px]">
+              {streamActive
+                ? 'LIVE BROADCAST'
+                : connectionState === 'connected'
+                ? 'Device Connected'
+                : 'Waiting for QR Scan'}
+            </span>
+          </div>
+
+          {streamActive && (
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300">
+              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+              <span>{formatTime(streamDuration)}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Actions */}
+        <div className="flex items-center gap-2">
+          {streamActive && (
+            <button
+              onClick={() => setCinemaMode(!cinemaMode)}
+              title={cinemaMode ? 'Show QR Sidebar' : 'Cinema Mode (Full Width)'}
+              className={`p-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors ${
+                cinemaMode
+                  ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  streamActive
-                    ? 'bg-emerald-400 animate-ping'
-                    : connectionState === 'connected'
-                    ? 'bg-cyan-400'
-                    : 'bg-amber-400 animate-pulse'
-                }`}
-              ></span>
-              <span>
-                {streamActive
-                  ? 'LIVE STREAMING'
-                  : connectionState === 'connected'
-                  ? 'Device Connected (Waiting for share tap)'
-                  : 'Waiting for QR Scan'}
-              </span>
-            </div>
-          </div>
+              {cinemaMode ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              <span className="hidden md:inline">{cinemaMode ? 'Show Panel' : 'Cinema View'}</span>
+            </button>
+          )}
+
+          <a
+            href={shareableUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition-all"
+          >
+            <span>Open Sender</span>
+            <ExternalLink className="w-3 h-3 text-cyan-400" />
+          </a>
         </div>
+      </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          {/* Main Video Viewport */}
-          <div className="lg:col-span-2 flex flex-col gap-4">
-            <div
-              ref={containerRef}
-              className="glass-panel rounded-2xl overflow-hidden border border-slate-800/80 bg-slate-950/90 relative aspect-video flex items-center justify-center shadow-2xl group min-h-[400px] lg:min-h-[500px]"
-            >
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted={isMuted}
-                className={`w-full h-full object-contain transition-opacity duration-300 ${
-                  streamActive ? 'opacity-100' : 'opacity-0'
-                }`}
-              />
+      {/* Main Viewport Grid: 100vh Zero-Scroll */}
+      <main className="flex-1 p-3 sm:p-4 flex gap-4 overflow-hidden relative">
+        
+        {/* Left Video Container: Expands to fit 100% available viewport */}
+        <div className="flex-1 flex flex-col h-full min-w-0">
+          <div
+            ref={containerRef}
+            className="w-full h-full rounded-2xl overflow-hidden border border-slate-800/80 bg-slate-950 flex items-center justify-center relative shadow-2xl group"
+          >
+            {/* The Live Video Element */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted={isMuted}
+              className={`max-w-full max-h-full w-full h-full object-contain transition-opacity duration-300 ${
+                streamActive ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
 
-              {!streamActive && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10">
-                  <div className="relative mb-6">
-                    <div className="w-20 h-20 rounded-full bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 animate-pulse">
-                      <Smartphone className="w-10 h-10" />
-                    </div>
-                    <div className="absolute -inset-3 rounded-full border border-cyan-500/20 animate-ping pointer-events-none"></div>
+            {/* Waiting Radar Placeholder when not streaming */}
+            {!streamActive && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 select-none">
+                <div className="relative mb-5">
+                  <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 animate-pulse shadow-xl shadow-indigo-500/10">
+                    <Smartphone className="w-8 h-8" />
                   </div>
-
-                  <h3 className="text-xl font-bold text-white mb-2">No Active Screen Stream</h3>
-                  <p className="text-slate-400 text-sm max-w-md mb-6 leading-relaxed">
-                    Scan the QR code on the right with your phone or open the link in another browser tab to start sharing.
-                  </p>
-
-                  <div className="flex items-center gap-3 text-xs text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <Radio className="w-3.5 h-3.5 text-cyan-400" /> WebRTC P2P Ready
-                    </span>
-                    <span>•</span>
-                    <span className="flex items-center gap-1">
-                      <Shield className="w-3.5 h-3.5 text-emerald-400" /> End-to-End Direct
-                    </span>
-                  </div>
+                  <div className="absolute -inset-2 rounded-2xl border border-cyan-500/20 animate-ping pointer-events-none"></div>
                 </div>
-              )}
 
-              {streamActive && (
-                <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-20">
-                  <div className="flex items-center gap-2 pointer-events-auto">
-                    <span className="px-2.5 py-1 rounded-md bg-rose-600/90 text-white text-[11px] font-bold tracking-wider uppercase flex items-center gap-1.5 shadow-lg">
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                      Live
-                    </span>
-                    <span className="px-2.5 py-1 rounded-md bg-slate-900/80 backdrop-blur-md text-slate-200 text-xs font-mono border border-slate-700/60 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                      {formatTime(streamDuration)}
-                    </span>
-                  </div>
-
-                  <div className="px-2.5 py-1 rounded-md bg-slate-900/80 backdrop-blur-md text-slate-300 text-xs font-mono border border-slate-700/60 pointer-events-auto">
-                    {streamStats.width}x{streamStats.height} @ {streamStats.fps}fps
-                  </div>
-                </div>
-              )}
-
-              {streamActive && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 rounded-xl bg-slate-950/85 backdrop-blur-xl border border-slate-800 shadow-2xl pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                  <button
-                    onClick={takeSnapshot}
-                    title="Take Screenshot"
-                    className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-cyan-400 transition-colors"
-                  >
-                    <Camera className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    onClick={toggleRecording}
-                    title={isRecording ? 'Stop Recording' : 'Record Stream'}
-                    className={`p-2.5 rounded-lg transition-colors ${
-                      isRecording
-                        ? 'bg-rose-600 text-white animate-pulse'
-                        : 'bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-rose-400'
-                    }`}
-                  >
-                    <Video className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      const nextMuted = !isMuted;
-                      setIsMuted(nextMuted);
-                      if (videoRef.current) videoRef.current.muted = nextMuted;
-                    }}
-                    title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
-                    className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-indigo-400 transition-colors"
-                  >
-                    {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  </button>
-
-                  <div className="w-[1px] h-5 bg-slate-800 mx-1"></div>
-
-                  <button
-                    onClick={toggleFullscreen}
-                    title="Toggle Fullscreen"
-                    className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white transition-colors"
-                  >
-                    {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="glass-panel p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs">
-              <div className="flex items-center gap-4 text-slate-400">
-                <span className="flex items-center gap-1.5">
-                  <Camera className="w-3.5 h-3.5 text-cyan-400" />
-                  Instant Snapshots
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Video className="w-3.5 h-3.5 text-rose-400" />
-                  WebM Stream Recorder
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Maximize className="w-3.5 h-3.5 text-indigo-400" />
-                  Fullscreen Mode
-                </span>
-              </div>
-
-              {streamActive && (
-                <div className="flex items-center gap-2 text-emerald-400 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  P2P Stream Active
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Side: QR Code Box */}
-          <div className="glass-panel rounded-2xl p-6 border border-slate-800/80 flex flex-col gap-6">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                  <QrCode className="w-5 h-5 text-cyan-400" />
-                  Connect Mobile / Presenter
-                </h3>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 flex items-center gap-1">
-                  <Lock className="w-3 h-3" /> HTTPS
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Scan this QR code with your phone or open link in another tab.
-              </p>
-            </div>
-
-            <div className="flex flex-col items-center justify-center p-6 bg-white rounded-2xl shadow-xl">
-              {shareableUrl ? (
-                <QRCodeSVG
-                  value={shareableUrl}
-                  size={200}
-                  level="H"
-                  includeMargin={false}
-                  className="rounded-lg"
-                />
-              ) : (
-                <div className="w-[200px] h-[200px] flex items-center justify-center text-slate-400">
-                  Generating QR...
-                </div>
-              )}
-              <div className="mt-4 text-center">
-                <p className="text-[11px] font-mono text-slate-700 font-semibold truncate max-w-[220px]">
-                  Room: {roomId}
+                <h3 className="text-lg sm:text-xl font-bold text-white mb-1.5">Awaiting Screen Broadcast</h3>
+                <p className="text-slate-400 text-xs sm:text-sm max-w-sm mb-4 leading-relaxed">
+                  Scan the QR code on the right with your phone or launch the sender tab to begin mirroring.
                 </p>
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                <span>Presenter Share Link:</span>
-                <span className="text-[10px] text-cyan-400 font-mono font-semibold">
-                  {activeBaseUrl.startsWith('https') ? '🔒 HTTPS' : 'HTTP'}
-                </span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={shareableUrl}
-                  className="flex-1 bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 select-all focus:outline-none"
-                />
+                <div className="flex items-center gap-3 text-[11px] text-slate-500 bg-slate-900/60 px-3.5 py-1.5 rounded-full border border-slate-800">
+                  <span className="flex items-center gap-1.5 text-cyan-400">
+                    <Radio className="w-3 h-3 animate-pulse" /> WebRTC P2P
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1.5 text-emerald-400">
+                    <Shield className="w-3 h-3" /> Zero Latency
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Floating Top Stats on Active Stream */}
+            {streamActive && (
+              <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
+                <div className="flex items-center gap-2 pointer-events-auto">
+                  <span className="px-2 py-0.5 rounded-md bg-rose-600/90 text-white text-[10px] font-bold tracking-wider uppercase flex items-center gap-1 shadow-md">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                    Live
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-md text-slate-200 text-[11px] font-mono border border-slate-800">
+                    {formatTime(streamDuration)}
+                  </span>
+                </div>
+
+                <div className="px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-md text-slate-300 text-[11px] font-mono border border-slate-800 pointer-events-auto">
+                  {streamStats.width}x{streamStats.height}
+                </div>
+              </div>
+            )}
+
+            {/* Floating Bottom Control Bar on Active Stream */}
+            {streamActive && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 p-1.5 rounded-xl bg-slate-950/90 backdrop-blur-xl border border-slate-800 shadow-2xl pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                 <button
-                  onClick={copyToClipboard}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+                  onClick={takeSnapshot}
+                  title="Take PNG Screenshot"
+                  className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-cyan-400 transition-colors"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'Copied' : 'Copy'}</span>
+                  <Camera className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={toggleRecording}
+                  title={isRecording ? 'Stop Recording' : 'Record Stream to WebM'}
+                  className={`p-2 rounded-lg transition-colors ${
+                    isRecording
+                      ? 'bg-rose-600 text-white animate-pulse'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-rose-400'
+                  }`}
+                >
+                  <Video className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={() => {
+                    const nextMuted = !isMuted;
+                    setIsMuted(nextMuted);
+                    if (videoRef.current) videoRef.current.muted = nextMuted;
+                  }}
+                  title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
+                  className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-indigo-400 transition-colors"
+                >
+                  {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+
+                <div className="w-[1px] h-4 bg-slate-800 mx-1"></div>
+
+                <button
+                  onClick={toggleFullscreen}
+                  title="Toggle Fullscreen"
+                  className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white transition-colors"
+                >
+                  {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
+            )}
+          </div>
+        </div>
 
-            {/* Custom Domain Override */}
-            <div className="space-y-2 border-t border-slate-800/80 pt-4">
-              <label className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                Custom Domain (Override):
-              </label>
-              
-              <div className="space-y-2">
+        {/* Right QR Side Panel (Hidden in Cinema Mode on Desktop) */}
+        {!cinemaMode && (
+          <aside className="w-80 shrink-0 hidden lg:flex flex-col h-full rounded-2xl border border-slate-800/80 bg-slate-950/70 backdrop-blur-xl p-4 justify-between overflow-y-auto">
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
+                    <QrCode className="w-4 h-4 text-cyan-400" />
+                    Mobile QR Connect
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-medium">
+                    Auto-Sync
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Scan with iPhone / Android camera to cast.
+                </p>
+              </div>
+
+              {/* QR Canvas Box: Compact & Sharp */}
+              <div className="flex flex-col items-center justify-center p-4 bg-white rounded-xl shadow-lg">
+                {shareableUrl ? (
+                  <QRCodeSVG
+                    value={shareableUrl}
+                    size={160}
+                    level="M"
+                    includeMargin={false}
+                    className="rounded-md"
+                  />
+                ) : (
+                  <div className="w-[160px] h-[160px] flex items-center justify-center text-slate-400 text-xs">
+                    Generating QR...
+                  </div>
+                )}
+                <div className="mt-2 text-center">
+                  <p className="text-[10px] font-mono text-slate-600 font-semibold truncate max-w-[180px]">
+                    Room: {roomId}
+                  </p>
+                </div>
+              </div>
+
+              {/* Copy Direct Share URL */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-slate-300 font-medium flex items-center justify-between">
+                  <span>Direct Share URL:</span>
+                  <span className="text-[10px] text-cyan-400 font-mono font-semibold">
+                    {activeBaseUrl.startsWith('https') ? '🔒 HTTPS' : 'HTTP'}
+                  </span>
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareableUrl}
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-slate-300 select-all focus:outline-none"
+                  />
+                  <button
+                    onClick={copyToClipboard}
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 transition-colors shrink-0"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copied ? 'Done' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Domain Override (Compact) */}
+              <div className="space-y-1 pt-2 border-t border-slate-800/80">
+                <label className="text-[11px] text-slate-400 font-medium">Domain Override (Optional):</label>
                 <input
                   type="text"
-                  placeholder="e.g. https://your-app.up.railway.app"
+                  placeholder="e.g. https://your-domain.app"
                   value={customHost}
                   onChange={(e) => setCustomHost(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
 
-            <div className="pt-1">
-              <a
-                href={shareableUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all"
-              >
-                <span>Open Sender in New Tab</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+            {/* Quick Helper Tip at bottom of sidebar */}
+            <div className="pt-3 border-t border-slate-800/80 text-[10px] text-slate-400 flex items-start gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+              <span>
+                Encrypted peer-to-peer WebRTC stream. Video does not go through third-party servers.
+              </span>
             </div>
-          </div>
-        </div>
+          </aside>
+        )}
       </main>
     </div>
   );

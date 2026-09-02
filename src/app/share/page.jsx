@@ -77,7 +77,6 @@ function ShareContent() {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[Sender] Connected with ID:', socket.id);
       socket.emit('join-room', { roomId, role: 'sender' });
       setJoined(true);
       setConnectionStatus('ready');
@@ -89,7 +88,6 @@ function ShareContent() {
       },
       null,
       (state) => {
-        console.log('[Sender] Connection state:', state);
         if (state === 'connected') {
           setConnectionStatus('sharing');
         }
@@ -99,21 +97,17 @@ function ShareContent() {
 
     socket.on('answer', async ({ answer }) => {
       try {
-        console.log('[Sender] Received Answer from Host');
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
-
-        // Flush any queued ICE candidates
         while (iceCandidatesQueueRef.current.length > 0) {
           const queuedCandidate = iceCandidatesQueueRef.current.shift();
           try {
             await pc.addIceCandidate(new RTCIceCandidate(queuedCandidate));
-            console.log('[Sender] Flushed queued ICE candidate');
           } catch (iceErr) {
-            console.warn('[Sender] Failed to add queued ICE candidate:', iceErr);
+            console.warn('[Sender] Failed adding queued candidate:', iceErr);
           }
         }
       } catch (err) {
-        console.error('[Sender] Failed to set remote answer:', err);
+        console.error('[Sender] Failed setting remote answer:', err);
       }
     });
 
@@ -124,10 +118,9 @@ function ShareContent() {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } else {
           iceCandidatesQueueRef.current.push(candidate);
-          console.log('[Sender] Queued ICE candidate from host');
         }
       } catch (err) {
-        console.error('[Sender] Failed to add ICE candidate:', err);
+        console.error('[Sender] Failed adding candidate:', err);
       }
     });
 
@@ -170,37 +163,30 @@ function ShareContent() {
 
         try {
           stream = await navigator.mediaDevices.getDisplayMedia({
-            video: {
-              cursor: 'always',
-            },
+            video: { cursor: 'always' },
             audio: includeAudio,
           });
         } catch (constraintErr) {
-          console.warn('[Sender] Retrying getDisplayMedia with simple video: true', constraintErr);
           stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         }
       } else {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: cameraFacing,
-          },
+          video: { facingMode: cameraFacing },
           audio: includeAudio,
         });
       }
 
       if (!stream) {
-        throw new Error('No media stream returned.');
+        throw new Error('No media stream available.');
       }
 
       streamRef.current = stream;
       const pc = pcRef.current;
       const socket = socketRef.current;
 
-      // Clean existing senders
       const senders = pc.getSenders();
       senders.forEach((sender) => pc.removeTrack(sender));
 
-      // Add new tracks
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
         track.onended = () => {
@@ -219,7 +205,7 @@ function ShareContent() {
     } catch (err) {
       console.error('[Sender] Error starting stream:', err);
       if (err.name === 'NotAllowedError') {
-        setErrorMsg('Screen/Camera permission was cancelled by user.');
+        setErrorMsg('Permission was cancelled by user.');
       } else {
         setErrorMsg(`${err.name || 'Error'}: ${err.message || 'Failed to start stream'}`);
       }
@@ -239,35 +225,35 @@ function ShareContent() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col min-h-screen bg-[#060911] text-slate-100 selection:bg-indigo-500 selection:text-white">
       <Navbar />
 
-      <main className="flex-1 max-w-lg mx-auto px-4 py-8 w-full flex flex-col justify-center">
-        {/* Mobile Header Card */}
-        <div className="glass-panel rounded-2xl p-6 border border-slate-800/80 mb-6 text-center relative overflow-hidden">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-cyan-500/20">
-            <Smartphone className="w-7 h-7" />
-          </div>
-
-          <h1 className="text-2xl font-bold text-white mb-1">Presenter Streamer</h1>
-          <p className="text-xs text-slate-400">
-            Broadcast live from this device to the Host Monitor.
-          </p>
-
-          <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-300">
-            <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-            <span>Room: {roomId || 'None'}</span>
+      <main className="flex-1 max-w-md mx-auto px-4 py-6 w-full flex flex-col justify-center">
+        {/* Compact Presenter Header */}
+        <div className="glass-panel rounded-2xl p-4 border border-slate-800/80 mb-4 text-center relative overflow-hidden">
+          <div className="flex items-center justify-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/20 shrink-0">
+              <Smartphone className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <h1 className="text-base font-bold text-white leading-tight">Mobile Presenter</h1>
+              <p className="text-[11px] text-slate-400">Broadcasting to Host Screen</p>
+            </div>
+            <div className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-700 text-[11px] font-mono text-slate-300">
+              <Radio className="w-3 h-3 text-cyan-400 animate-pulse" />
+              <span>{roomId ? roomId : 'None'}</span>
+            </div>
           </div>
         </div>
 
         {/* Error Notification */}
         {errorMsg && (
-          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 mb-6 text-xs text-rose-200 flex flex-col gap-2">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-3 mb-4 text-xs text-rose-200 flex flex-col gap-1.5">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold mb-0.5">Notice</p>
-                <p className="leading-relaxed">{errorMsg}</p>
+                <p className="font-semibold text-[11px]">Notice</p>
+                <p className="leading-tight text-[11px]">{errorMsg}</p>
               </div>
             </div>
 
@@ -278,7 +264,7 @@ function ShareContent() {
                   setStreamType('camera');
                   startStream('camera');
                 }}
-                className="mt-2 py-2 px-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-center transition-colors"
+                className="mt-1 py-1.5 px-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-center text-xs transition-colors"
               >
                 Switch to Live Camera Stream (100% Supported)
               </button>
@@ -286,11 +272,11 @@ function ShareContent() {
           </div>
         )}
 
-        {/* Room Code Input */}
+        {/* Room Code Input (if needed) */}
         {!roomId && (
-          <div className="glass-panel rounded-2xl p-6 border border-slate-800 mb-6">
-            <label className="block text-xs text-slate-300 font-medium mb-2">
-              Enter Room ID from Host Monitor:
+          <div className="glass-panel rounded-2xl p-4 border border-slate-800 mb-4">
+            <label className="block text-xs text-slate-300 font-medium mb-1.5">
+              Enter Room ID from Host Screen:
             </label>
             <div className="flex gap-2">
               <input
@@ -298,7 +284,7 @@ function ShareContent() {
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
                 placeholder="e.g. cast_abc123"
-                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
               />
             </div>
           </div>
@@ -306,27 +292,27 @@ function ShareContent() {
 
         {/* Main Action Box */}
         {roomId && (
-          <div className="glass-panel-glow rounded-2xl p-6 border border-slate-800 mb-6 flex flex-col items-center text-center">
+          <div className="glass-panel-glow rounded-2xl p-5 border border-slate-800 mb-4 flex flex-col items-center text-center shadow-xl">
             {!isSharing ? (
               <>
-                <div className="w-full mb-6 space-y-4">
-                  {/* Stream Mode Switcher */}
-                  <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-left text-xs">
-                    <span className="text-slate-400 font-medium block mb-2">Choose Broadcast Source:</span>
-                    <div className="grid grid-cols-2 gap-2">
+                <div className="w-full mb-4 space-y-3">
+                  {/* Mode Switcher */}
+                  <div className="bg-slate-900/60 rounded-xl p-2.5 border border-slate-800 text-left text-xs">
+                    <span className="text-slate-400 text-[11px] font-medium block mb-1.5">Broadcast Source:</span>
+                    <div className="grid grid-cols-2 gap-1.5">
                       <button
                         type="button"
                         onClick={() => {
                           setStreamType('screen');
                           setErrorMsg('');
                         }}
-                        className={`py-2 px-3 rounded-lg border flex items-center justify-center gap-2 font-medium transition-all ${
+                        className={`py-2 px-2.5 rounded-lg border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
                           streamType === 'screen'
-                            ? 'bg-indigo-600/30 border-indigo-500 text-white shadow-md shadow-indigo-500/20'
+                            ? 'bg-indigo-600/30 border-indigo-500 text-white shadow-sm shadow-indigo-500/20'
                             : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
-                        <Cast className="w-4 h-4 text-cyan-400" />
+                        <Cast className="w-3.5 h-3.5 text-cyan-400" />
                         <span>Screen Share</span>
                       </button>
 
@@ -336,42 +322,42 @@ function ShareContent() {
                           setStreamType('camera');
                           setErrorMsg('');
                         }}
-                        className={`py-2 px-3 rounded-lg border flex items-center justify-center gap-2 font-medium transition-all ${
+                        className={`py-2 px-2.5 rounded-lg border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
                           streamType === 'camera'
-                            ? 'bg-cyan-600/30 border-cyan-500 text-white shadow-md shadow-cyan-500/20'
+                            ? 'bg-cyan-600/30 border-cyan-500 text-white shadow-sm shadow-cyan-500/20'
                             : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
-                        <Camera className="w-4 h-4 text-emerald-400" />
+                        <Camera className="w-3.5 h-3.5 text-emerald-400" />
                         <span>Live Camera</span>
                       </button>
                     </div>
 
                     {streamType === 'camera' && (
-                      <div className="mt-3 flex items-center justify-between text-[11px] text-slate-300 pt-2 border-t border-slate-800/80">
-                        <span>Select Camera:</span>
-                        <div className="flex gap-2">
+                      <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-300 pt-2 border-t border-slate-800">
+                        <span>Camera Lens:</span>
+                        <div className="flex gap-1.5">
                           <button
                             type="button"
                             onClick={() => setCameraFacing('environment')}
-                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium ${
+                            className={`px-2 py-0.5 rounded-md border text-[10px] font-medium ${
                               cameraFacing === 'environment'
                                 ? 'bg-cyan-600 text-white border-cyan-500'
                                 : 'bg-slate-950 border-slate-800 text-slate-400'
                             }`}
                           >
-                            Back Lens
+                            Back
                           </button>
                           <button
                             type="button"
                             onClick={() => setCameraFacing('user')}
-                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium ${
+                            className={`px-2 py-0.5 rounded-md border text-[10px] font-medium ${
                               cameraFacing === 'user'
                                 ? 'bg-cyan-600 text-white border-cyan-500'
                                 : 'bg-slate-950 border-slate-800 text-slate-400'
                             }`}
                           >
-                            Front Lens
+                            Front
                           </button>
                         </div>
                       </div>
@@ -379,15 +365,15 @@ function ShareContent() {
                   </div>
 
                   {/* Audio Toggle */}
-                  <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-left text-xs">
-                    <label className="flex items-center gap-2.5 cursor-pointer text-slate-300 select-none">
+                  <div className="bg-slate-900/60 rounded-xl p-2.5 border border-slate-800 text-left text-xs">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-300 text-[11px] select-none">
                       <input
                         type="checkbox"
                         checked={includeAudio}
                         onChange={(e) => setIncludeAudio(e.target.checked)}
                         className="rounded bg-slate-950 border-slate-700 text-cyan-500 focus:ring-0"
                       />
-                      <span>Include Audio (Microphone / System Audio)</span>
+                      <span>Include Audio Stream (Mic / System Audio)</span>
                     </label>
                   </div>
                 </div>
@@ -395,57 +381,53 @@ function ShareContent() {
                 {/* Main Action Button */}
                 <button
                   onClick={() => startStream(streamType)}
-                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-indigo-500 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-lg flex items-center justify-center gap-3 shadow-xl shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-95 transition-all duration-200"
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-indigo-500 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-base flex items-center justify-center gap-2.5 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-95 transition-all duration-200"
                 >
                   {streamType === 'screen' ? (
                     <>
-                      <Cast className="w-6 h-6 animate-pulse" />
-                      <span>Start Sharing Screen</span>
+                      <Cast className="w-5 h-5 animate-pulse" />
+                      <span>Start Screen Share</span>
                     </>
                   ) : (
                     <>
-                      <Camera className="w-6 h-6 animate-pulse" />
+                      <Camera className="w-5 h-5 animate-pulse" />
                       <span>Start Camera Broadcast</span>
                     </>
                   )}
                 </button>
-
-                <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
-                  Your browser will ask you which screen / window to share.
-                </p>
               </>
             ) : (
               /* Active Broadcast View */
-              <div className="w-full py-4 flex flex-col items-center">
-                <div className="relative mb-6">
-                  <div className="w-20 h-20 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 animate-pulse">
-                    {streamType === 'screen' ? <Cast className="w-10 h-10" /> : <Camera className="w-10 h-10" />}
+              <div className="w-full py-2 flex flex-col items-center">
+                <div className="relative mb-4">
+                  <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 animate-pulse">
+                    {streamType === 'screen' ? <Cast className="w-8 h-8" /> : <Camera className="w-8 h-8" />}
                   </div>
-                  <div className="absolute -inset-2 rounded-full border border-emerald-500/30 animate-ping"></div>
+                  <div className="absolute -inset-1.5 rounded-full border border-emerald-500/30 animate-ping"></div>
                 </div>
 
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-3">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>BROADCASTING LIVE ({streamType.toUpperCase()})</span>
+                <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-semibold mb-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>BROADCASTING LIVE</span>
                 </div>
 
-                <div className="flex items-center gap-1.5 text-2xl font-mono font-bold text-white mb-6">
-                  <Clock className="w-5 h-5 text-cyan-400" />
+                <div className="flex items-center gap-1.5 text-xl font-mono font-bold text-white mb-4">
+                  <Clock className="w-4 h-4 text-cyan-400" />
                   <span>{formatTime(streamDuration)}</span>
                 </div>
 
-                <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 text-xs text-slate-300 mb-6 text-left w-full space-y-2">
-                  <p className="flex items-center gap-2 font-medium text-emerald-400">
-                    <CheckCircle className="w-4 h-4 shrink-0" />
-                    Stream is actively playing on Host Monitor!
+                <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800 text-xs text-slate-300 mb-4 text-left w-full">
+                  <p className="flex items-center gap-1.5 font-medium text-emerald-400 text-[11px]">
+                    <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                    Stream is active on Host Display!
                   </p>
                 </div>
 
                 <button
                   onClick={stopStream}
-                  className="w-full py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
+                  className="w-full py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-rose-600/30 active:scale-95 transition-all"
                 >
-                  <StopCircle className="w-5 h-5" />
+                  <StopCircle className="w-4 h-4" />
                   <span>Stop Broadcast</span>
                 </button>
               </div>
@@ -453,11 +435,9 @@ function ShareContent() {
           </div>
         )}
 
-        <div className="glass-panel p-4 rounded-xl border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2.5">
-          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-          <span>
-            <strong>P2P Direct WebRTC:</strong> Encrypted peer-to-peer media streaming directly to host display.
-          </span>
+        <div className="glass-panel p-3 rounded-xl border border-slate-800/80 text-[10px] text-slate-400 flex items-center justify-center gap-1.5 text-center">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span>Encrypted WebRTC P2P direct media stream.</span>
         </div>
       </main>
     </div>
@@ -466,7 +446,7 @@ function ShareContent() {
 
 export default function SharePage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-400">Loading Presenter...</div>}>
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-400 text-xs">Loading Presenter...</div>}>
       <ShareContent />
     </Suspense>
   );
