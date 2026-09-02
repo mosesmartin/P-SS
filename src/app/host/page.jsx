@@ -58,36 +58,28 @@ export default function HostDashboard() {
     const generatedRoom = 'cast_' + Math.random().toString(36).substring(2, 8);
     setRoomId(generatedRoom);
 
-    // Initial base URL
     if (typeof window !== 'undefined') {
-      const currentOrigin = window.location.origin;
-      setSelectedBaseUrl(currentOrigin);
-      if (currentOrigin.startsWith('https://') || !currentOrigin.includes('localhost')) {
+      const origin = window.location.origin;
+      setSelectedBaseUrl(origin);
+      if (origin.startsWith('https://') || (!origin.includes('localhost') && !origin.includes('127.0.0.1') && !origin.includes('192.168.'))) {
         setIsProduction(true);
       }
     }
 
-    fetch('/api/network-ip')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.isProduction && data.currentOrigin) {
-          setSelectedBaseUrl(data.currentOrigin);
-          setIsProduction(true);
-        } else if (data.lanHttpUrl) {
-          // If on local development, offer LAN IP
-          if (!window.location.origin.startsWith('https://')) {
+    // Only query LAN IP if running locally on localhost
+    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      fetch('/api/network-ip')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.lanHttpUrl) {
             setSelectedBaseUrl(data.lanHttpUrl);
           }
-        }
-        if (data.allIps) {
-          setAvailableIps(data.allIps);
-        }
-      })
-      .catch(() => {
-        if (typeof window !== 'undefined') {
-          setSelectedBaseUrl(window.location.origin);
-        }
-      });
+          if (data.allIps) {
+            setAvailableIps(data.allIps);
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const currentBaseUrl = customHost.trim() || selectedBaseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
