@@ -40,10 +40,10 @@ function ShareContent() {
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [hasScreenApi, setHasScreenApi] = useState(true);
-  const [browserInfo, setBrowserInfo] = useState('');
 
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  const iceCandidatesQueueRef = useRef([]);
   const streamRef = useRef(null);
   const timerRef = useRef(null);
 
@@ -52,7 +52,6 @@ function ShareContent() {
       const ua = navigator.userAgent;
       const isIOS = /iPhone|iPad|iPod/i.test(ua);
       setIsIOSDevice(isIOS);
-      setBrowserInfo(ua);
 
       const hasDisplayMedia = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
       setHasScreenApi(hasDisplayMedia);
@@ -91,6 +90,9 @@ function ShareContent() {
       null,
       (state) => {
         console.log('[Sender] Connection state:', state);
+        if (state === 'connected') {
+          setConnectionStatus('sharing');
+        }
       }
     );
     pcRef.current = pc;
@@ -99,6 +101,17 @@ function ShareContent() {
       try {
         console.log('[Sender] Received Answer from Host');
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+        // Flush any queued ICE candidates
+        while (iceCandidatesQueueRef.current.length > 0) {
+          const queuedCandidate = iceCandidatesQueueRef.current.shift();
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(queuedCandidate));
+            console.log('[Sender] Flushed queued ICE candidate');
+          } catch (iceErr) {
+            console.warn('[Sender] Failed to add queued ICE candidate:', iceErr);
+          }
+        }
       } catch (err) {
         console.error('[Sender] Failed to set remote answer:', err);
       }
@@ -106,8 +119,12 @@ function ShareContent() {
 
     socket.on('ice-candidate', async ({ candidate }) => {
       try {
-        if (candidate && pc.remoteDescription) {
+        if (!candidate) return;
+        if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } else {
+          iceCandidatesQueueRef.current.push(candidate);
+          console.log('[Sender] Queued ICE candidate from host');
         }
       } catch (err) {
         console.error('[Sender] Failed to add ICE candidate:', err);
@@ -141,7 +158,6 @@ function ShareContent() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Start Stream (Screen or Camera)
   const startStream = async (type = streamType) => {
     setErrorMsg('');
     try {
@@ -149,23 +165,21 @@ function ShareContent() {
 
       if (type === 'screen') {
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
-          throw new Error(
-            'getDisplayMedia is not available on this mobile browser. Try Android Chrome or switch to Live Camera mode below!'
-          );
+          throw new Error('getDisplayMedia is not available on this browser.');
         }
 
-        // Mobile-safe clean constraints (avoids OverconstrainedError on portrait screens)
         try {
           stream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
+            video: {
+              cursor: 'always',
+            },
             audio: includeAudio,
           });
         } catch (constraintErr) {
-          console.warn('[Sender] Retrying with basic video constraint...', constraintErr);
+          console.warn('[Sender] Retrying getDisplayMedia with simple video: true', constraintErr);
           stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         }
       } else {
-        // Camera streaming mode (Works on all Android & iOS devices)
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: cameraFacing,
@@ -175,13 +189,18 @@ function ShareContent() {
       }
 
       if (!stream) {
-        throw new Error('No media stream returned from device.');
+        throw new Error('No media stream returned.');
       }
 
       streamRef.current = stream;
       const pc = pcRef.current;
       const socket = socketRef.current;
 
+      // Clean existing senders
+      const senders = pc.getSenders();
+      senders.forEach((sender) => pc.removeTrack(sender));
+
+      // Add new tracks
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
         track.onended = () => {
@@ -201,8 +220,6 @@ function ShareContent() {
       console.error('[Sender] Error starting stream:', err);
       if (err.name === 'NotAllowedError') {
         setErrorMsg('Screen/Camera permission was cancelled by user.');
-      } else if (err.name === 'OverconstrainedError') {
-        setErrorMsg('Device display constraints mismatch. Retrying in basic mode...');
       } else {
         setErrorMsg(`${err.name || 'Error'}: ${err.message || 'Failed to start stream'}`);
       }
@@ -232,9 +249,9 @@ function ShareContent() {
             <Smartphone className="w-7 h-7" />
           </div>
 
-          <h1 className="text-2xl font-bold text-white mb-1">Mobile Presenter</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">Presenter Streamer</h1>
           <p className="text-xs text-slate-400">
-            Broadcast live from your phone to the Host Monitor in real-time.
+            Broadcast live from this device to the Host Monitor.
           </p>
 
           <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-300">
@@ -249,7 +266,7 @@ function ShareContent() {
             <div className="flex items-start gap-2.5">
               <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold mb-0.5">Broadcast Notice</p>
+                <p className="font-semibold mb-0.5">Notice</p>
                 <p className="leading-relaxed">{errorMsg}</p>
               </div>
             </div>
@@ -295,7 +312,7 @@ function ShareContent() {
                 <div className="w-full mb-6 space-y-4">
                   {/* Stream Mode Switcher */}
                   <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-left text-xs">
-                    <span className="text-slate-400 font-medium block mb-2">Choose Broadcast Mode:</span>
+                    <span className="text-slate-400 font-medium block mb-2">Choose Broadcast Source:</span>
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
@@ -310,7 +327,7 @@ function ShareContent() {
                         }`}
                       >
                         <Cast className="w-4 h-4 text-cyan-400" />
-                        <span>Screen Mirror</span>
+                        <span>Screen Share</span>
                       </button>
 
                       <button
@@ -370,7 +387,7 @@ function ShareContent() {
                         onChange={(e) => setIncludeAudio(e.target.checked)}
                         className="rounded bg-slate-950 border-slate-700 text-cyan-500 focus:ring-0"
                       />
-                      <span>Include Audio Stream (Microphone / System)</span>
+                      <span>Include Audio (Microphone / System Audio)</span>
                     </label>
                   </div>
                 </div>
@@ -383,7 +400,7 @@ function ShareContent() {
                   {streamType === 'screen' ? (
                     <>
                       <Cast className="w-6 h-6 animate-pulse" />
-                      <span>Start Screen Mirroring</span>
+                      <span>Start Sharing Screen</span>
                     </>
                   ) : (
                     <>
@@ -394,9 +411,7 @@ function ShareContent() {
                 </button>
 
                 <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
-                  {streamType === 'screen'
-                    ? 'Android will show a system dialog: Tap "Start now" to mirror full screen.'
-                    : 'Your browser will prompt for camera access.'}
+                  Your browser will ask you which screen / window to share.
                 </p>
               </>
             ) : (
@@ -411,7 +426,7 @@ function ShareContent() {
 
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-3">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>LIVE ({streamType === 'screen' ? 'SCREEN MIRROR' : 'CAMERA'})</span>
+                  <span>BROADCASTING LIVE ({streamType.toUpperCase()})</span>
                 </div>
 
                 <div className="flex items-center gap-1.5 text-2xl font-mono font-bold text-white mb-6">
@@ -431,18 +446,17 @@ function ShareContent() {
                   className="w-full py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
                 >
                   <StopCircle className="w-5 h-5" />
-                  <span>Stop Stream</span>
+                  <span>Stop Broadcast</span>
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {/* Security / Help Notice */}
         <div className="glass-panel p-4 rounded-xl border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
           <span>
-            <strong>P2P Direct WebRTC:</strong> Peer-to-peer encrypted media streaming directly to host display.
+            <strong>P2P Direct WebRTC:</strong> Encrypted peer-to-peer media streaming directly to host display.
           </span>
         </div>
       </main>

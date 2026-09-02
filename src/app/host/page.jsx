@@ -21,7 +21,8 @@ import {
   Shield,
   ExternalLink,
   Lock,
-  Globe
+  Globe,
+  RefreshCw
 } from 'lucide-react';
 
 export default function HostDashboard() {
@@ -31,7 +32,7 @@ export default function HostDashboard() {
   const [copied, setCopied] = useState(false);
   
   // Connection & Stream State
-  const [connectionState, setConnectionState] = useState('disconnected');
+  const [connectionState, setConnectionState] = useState('disconnected'); // disconnected, waiting, connected, streaming
   const [peerRole, setPeerRole] = useState(null);
   const [streamActive, setStreamActive] = useState(false);
   const [streamStats, setStreamStats] = useState({ width: 0, height: 0, fps: 0 });
@@ -40,13 +41,14 @@ export default function HostDashboard() {
   // Stream Controls
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
 
   // Refs
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  const iceCandidatesQueueRef = useRef([]);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const timerRef = useRef(null);
@@ -60,7 +62,6 @@ export default function HostDashboard() {
     }
   }, []);
 
-  // Compute exact URL for QR Code
   const activeBaseUrl = customHost.trim() || originUrl || (typeof window !== 'undefined' ? window.location.origin : '');
   const shareableUrl = (roomId && activeBaseUrl) ? `${activeBaseUrl}/share?room=${roomId}` : '';
 
@@ -93,30 +94,38 @@ export default function HostDashboard() {
       }
     });
 
+    // Initialize RTCPeerConnection with ICE candidate queueing
     const pc = createPeerConnection(
       (candidate) => {
         socket.emit('ice-candidate', { roomId, candidate });
       },
       (event) => {
-        console.log('[Host] Remote track received:', event.track.kind);
-        if (videoRef.current && event.streams[0]) {
-          videoRef.current.srcObject = event.streams[0];
+        console.log('[Host] Remote track received:', event.track.kind, event.streams);
+        const stream = event.streams[0] || new MediaStream([event.track]);
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.muted = true;
+          videoRef.current.play().catch((e) => console.warn('[Host] Auto-play prevented:', e));
+
           setStreamActive(true);
           setConnectionState('streaming');
 
           event.track.onloadedmetadata = () => {
             const settings = event.track.getSettings();
             setStreamStats({
-              width: settings.width || 1080,
-              height: settings.height || 1920,
+              width: settings.width || 1280,
+              height: settings.height || 720,
               fps: settings.frameRate || 30,
             });
           };
         }
       },
       (state) => {
-        console.log('[Host] PeerConnection state:', state);
-        if (state === 'disconnected' || state === 'failed') {
+        console.log('[Host] Connection state:', state);
+        if (state === 'connected') {
+          setConnectionState('streaming');
+        } else if (state === 'disconnected' || state === 'failed') {
           setStreamActive(false);
           setConnectionState('waiting');
         }
@@ -124,22 +133,42 @@ export default function HostDashboard() {
     );
     pcRef.current = pc;
 
+    // Handle SDP Offer from Sender with ICE Queue Flushing
     socket.on('offer', async ({ offer }) => {
       try {
-        console.log('[Host] Received Offer, creating Answer...');
+        console.log('[Host] Processing WebRTC Offer from sender...');
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        
+        // Flush any queued ICE candidates
+        while (iceCandidatesQueueRef.current.length > 0) {
+          const queuedCandidate = iceCandidatesQueueRef.current.shift();
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(queuedCandidate));
+            console.log('[Host] Flushed queued ICE candidate');
+          } catch (iceErr) {
+            console.warn('[Host] Failed to add queued ICE candidate:', iceErr);
+          }
+        }
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('answer', { roomId, answer });
+        console.log('[Host] Created and sent Answer to sender');
       } catch (err) {
         console.error('[Host] Error processing offer:', err);
       }
     });
 
+    // Handle incoming ICE Candidate with queueing fallback
     socket.on('ice-candidate', async ({ candidate }) => {
       try {
-        if (candidate && pc.remoteDescription) {
+        if (!candidate) return;
+        if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } else {
+          // Queue candidate until remote description is applied
+          iceCandidatesQueueRef.current.push(candidate);
+          console.log('[Host] Queued ICE candidate (waiting for remote description)');
         }
       } catch (err) {
         console.error('[Host] Error adding ICE candidate:', err);
@@ -204,8 +233,8 @@ export default function HostDashboard() {
     if (!videoRef.current || !streamActive) return;
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1080;
-    canvas.height = video.videoHeight || 1920;
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
@@ -269,7 +298,7 @@ export default function HostDashboard() {
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
-                Scan QR code below from your phone to mirror screen here in real-time.
+                Scan QR code below from your phone/sender to mirror screen here in real-time.
               </p>
             </div>
           </div>
@@ -297,8 +326,8 @@ export default function HostDashboard() {
                 {streamActive
                   ? 'LIVE STREAMING'
                   : connectionState === 'connected'
-                  ? 'Phone Connected (Ready to share)'
-                  : 'Waiting for Phone to Scan QR'}
+                  ? 'Device Connected (Waiting for share tap)'
+                  : 'Waiting for QR Scan'}
               </span>
             </div>
           </div>
@@ -332,16 +361,16 @@ export default function HostDashboard() {
 
                   <h3 className="text-xl font-bold text-white mb-2">No Active Screen Stream</h3>
                   <p className="text-slate-400 text-sm max-w-md mb-6 leading-relaxed">
-                    Scan the QR code on the right with your phone camera to begin sharing your mobile screen.
+                    Scan the QR code on the right with your phone or open the link in another browser tab to start sharing.
                   </p>
 
                   <div className="flex items-center gap-3 text-xs text-slate-500">
                     <span className="flex items-center gap-1">
-                      <Radio className="w-3.5 h-3.5 text-cyan-400" /> WebRTC Signaling Ready
+                      <Radio className="w-3.5 h-3.5 text-cyan-400" /> WebRTC P2P Ready
                     </span>
                     <span>•</span>
                     <span className="flex items-center gap-1">
-                      <Shield className="w-3.5 h-3.5 text-emerald-400" /> End-to-End P2P
+                      <Shield className="w-3.5 h-3.5 text-emerald-400" /> End-to-End Direct
                     </span>
                   </div>
                 </div>
@@ -389,7 +418,11 @@ export default function HostDashboard() {
                   </button>
 
                   <button
-                    onClick={() => setIsMuted(!isMuted)}
+                    onClick={() => {
+                      const nextMuted = !isMuted;
+                      setIsMuted(nextMuted);
+                      if (videoRef.current) videoRef.current.muted = nextMuted;
+                    }}
                     title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
                     className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-indigo-400 transition-colors"
                   >
@@ -413,11 +446,11 @@ export default function HostDashboard() {
               <div className="flex items-center gap-4 text-slate-400">
                 <span className="flex items-center gap-1.5">
                   <Camera className="w-3.5 h-3.5 text-cyan-400" />
-                  Instant PNG Snapshots
+                  Instant Snapshots
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Video className="w-3.5 h-3.5 text-rose-400" />
-                  Local WebM Recording
+                  WebM Stream Recorder
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Maximize className="w-3.5 h-3.5 text-indigo-400" />
@@ -428,7 +461,7 @@ export default function HostDashboard() {
               {streamActive && (
                 <div className="flex items-center gap-2 text-emerald-400 font-medium">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  P2P Direct Video Stream Connected
+                  P2P Stream Active
                 </div>
               )}
             </div>
@@ -440,14 +473,14 @@ export default function HostDashboard() {
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-bold text-white text-lg flex items-center gap-2">
                   <QrCode className="w-5 h-5 text-cyan-400" />
-                  Mobile Connection QR
+                  Connect Mobile / Presenter
                 </h3>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 flex items-center gap-1">
-                  <Lock className="w-3 h-3" /> Safari & Chrome Ready
+                  <Lock className="w-3 h-3" /> HTTPS
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Scan this with your iPhone/Android camera to start mirroring.
+                Scan this QR code with your phone or open link in another tab.
               </p>
             </div>
 
@@ -474,9 +507,9 @@ export default function HostDashboard() {
 
             <div className="space-y-2">
               <label className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                <span>QR Link (Auto-Generated):</span>
+                <span>Presenter Share Link:</span>
                 <span className="text-[10px] text-cyan-400 font-mono font-semibold">
-                  {activeBaseUrl.startsWith('https') ? '🔒 HTTPS Secure' : 'HTTP'}
+                  {activeBaseUrl.startsWith('https') ? '🔒 HTTPS' : 'HTTP'}
                 </span>
               </label>
               <div className="flex gap-2">
@@ -500,7 +533,7 @@ export default function HostDashboard() {
             <div className="space-y-2 border-t border-slate-800/80 pt-4">
               <label className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
                 <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                Custom Domain (Optional Override):
+                Custom Domain (Override):
               </label>
               
               <div className="space-y-2">
@@ -512,16 +545,6 @@ export default function HostDashboard() {
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
-
-              <div className="flex flex-col gap-1.5 mt-2 text-[11px] text-slate-400 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                <div className="flex items-center gap-1.5 font-semibold text-emerald-300">
-                  <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                  Direct HTTPS Link:
-                </div>
-                <p className="leading-relaxed text-slate-300">
-                  QR Code automatically encodes the domain in your browser URL.
-                </p>
-              </div>
             </div>
 
             <div className="pt-1">
@@ -529,9 +552,9 @@ export default function HostDashboard() {
                 href={shareableUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 text-xs font-medium flex items-center justify-center gap-2 transition-all"
+                className="w-full py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all"
               >
-                <span>Test Sender Tab in Browser</span>
+                <span>Open Sender in New Tab</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
