@@ -16,7 +16,6 @@ import {
   Video,
   Volume2,
   VolumeX,
-  Wifi,
   Radio,
   Clock,
   Shield,
@@ -27,11 +26,9 @@ import {
 
 export default function HostDashboard() {
   const [roomId, setRoomId] = useState('');
-  const [selectedBaseUrl, setSelectedBaseUrl] = useState('');
+  const [originUrl, setOriginUrl] = useState('');
   const [customHost, setCustomHost] = useState('');
-  const [availableIps, setAvailableIps] = useState([]);
   const [copied, setCopied] = useState(false);
-  const [isProduction, setIsProduction] = useState(false);
   
   // Connection & Stream State
   const [connectionState, setConnectionState] = useState('disconnected');
@@ -59,31 +56,13 @@ export default function HostDashboard() {
     setRoomId(generatedRoom);
 
     if (typeof window !== 'undefined') {
-      const origin = window.location.origin;
-      setSelectedBaseUrl(origin);
-      if (origin.startsWith('https://') || (!origin.includes('localhost') && !origin.includes('127.0.0.1') && !origin.includes('192.168.'))) {
-        setIsProduction(true);
-      }
-    }
-
-    // Only query LAN IP if running locally on localhost
-    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-      fetch('/api/network-ip')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.lanHttpUrl) {
-            setSelectedBaseUrl(data.lanHttpUrl);
-          }
-          if (data.allIps) {
-            setAvailableIps(data.allIps);
-          }
-        })
-        .catch(() => {});
+      setOriginUrl(window.location.origin);
     }
   }, []);
 
-  const currentBaseUrl = customHost.trim() || selectedBaseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
-  const shareableUrl = roomId ? `${currentBaseUrl}/share?room=${roomId}` : '';
+  // Compute exact URL for QR Code
+  const activeBaseUrl = customHost.trim() || originUrl || (typeof window !== 'undefined' ? window.location.origin : '');
+  const shareableUrl = (roomId && activeBaseUrl) ? `${activeBaseUrl}/share?room=${roomId}` : '';
 
   useEffect(() => {
     if (!roomId) return;
@@ -326,6 +305,7 @@ export default function HostDashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          {/* Main Video Viewport */}
           <div className="lg:col-span-2 flex flex-col gap-4">
             <div
               ref={containerRef}
@@ -454,6 +434,7 @@ export default function HostDashboard() {
             </div>
           </div>
 
+          {/* Right Side: QR Code Box */}
           <div className="glass-panel rounded-2xl p-6 border border-slate-800/80 flex flex-col gap-6">
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -466,7 +447,7 @@ export default function HostDashboard() {
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Scan this with your mobile phone camera to start casting.
+                Scan this with your iPhone/Android camera to start mirroring.
               </p>
             </div>
 
@@ -493,9 +474,9 @@ export default function HostDashboard() {
 
             <div className="space-y-2">
               <label className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                <span>Direct Share URL:</span>
+                <span>QR Link (Auto-Generated):</span>
                 <span className="text-[10px] text-cyan-400 font-mono font-semibold">
-                  {currentBaseUrl.startsWith('https') ? '🔒 HTTPS Secure' : 'HTTP'}
+                  {activeBaseUrl.startsWith('https') ? '🔒 HTTPS Secure' : 'HTTP'}
                 </span>
               </label>
               <div className="flex gap-2">
@@ -515,18 +496,18 @@ export default function HostDashboard() {
               </div>
             </div>
 
-            {/* Host URL / Tunnel configuration */}
+            {/* Custom Domain Override */}
             <div className="space-y-2 border-t border-slate-800/80 pt-4">
               <label className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
                 <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                Current Domain / Base URL:
+                Custom Domain (Optional Override):
               </label>
               
               <div className="space-y-2">
                 <input
                   type="text"
-                  placeholder="e.g. https://your-app.onrender.com"
-                  value={customHost || selectedBaseUrl}
+                  placeholder="e.g. https://your-app.up.railway.app"
+                  value={customHost}
                   onChange={(e) => setCustomHost(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 />
@@ -535,10 +516,10 @@ export default function HostDashboard() {
               <div className="flex flex-col gap-1.5 mt-2 text-[11px] text-slate-400 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
                 <div className="flex items-center gap-1.5 font-semibold text-emerald-300">
                   <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                  Cloud Deployment (HTTPS):
+                  Direct HTTPS Link:
                 </div>
                 <p className="leading-relaxed text-slate-300">
-                  Jab yeh app <strong>Render / Railway</strong> par deploy hogi, toh Safari aur Chrome par bina kisi warning ke screen share allow ho jayegi.
+                  QR Code automatically encodes the domain in your browser URL.
                 </p>
               </div>
             </div>
