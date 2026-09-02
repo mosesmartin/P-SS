@@ -22,21 +22,19 @@ import {
   Shield,
   ExternalLink,
   Lock,
-  AlertCircle,
-  HelpCircle
+  Globe
 } from 'lucide-react';
 
 export default function HostDashboard() {
   const [roomId, setRoomId] = useState('');
-  const [lanHttpUrl, setLanHttpUrl] = useState('');
-  const [lanHttpsUrl, setLanHttpsUrl] = useState('');
   const [selectedBaseUrl, setSelectedBaseUrl] = useState('');
   const [customHost, setCustomHost] = useState('');
   const [availableIps, setAvailableIps] = useState([]);
   const [copied, setCopied] = useState(false);
+  const [isProduction, setIsProduction] = useState(false);
   
   // Connection & Stream State
-  const [connectionState, setConnectionState] = useState('disconnected'); // disconnected, waiting, connected, streaming
+  const [connectionState, setConnectionState] = useState('disconnected');
   const [peerRole, setPeerRole] = useState(null);
   const [streamActive, setStreamActive] = useState(false);
   const [streamStats, setStreamStats] = useState({ width: 0, height: 0, fps: 0 });
@@ -56,38 +54,45 @@ export default function HostDashboard() {
   const recordedChunksRef = useRef([]);
   const timerRef = useRef(null);
 
-  // Generate Room ID and Fetch Network IP
   useEffect(() => {
     const generatedRoom = 'cast_' + Math.random().toString(36).substring(2, 8);
     setRoomId(generatedRoom);
 
-    // Fetch server LAN IP
+    // Initial base URL
+    if (typeof window !== 'undefined') {
+      const currentOrigin = window.location.origin;
+      setSelectedBaseUrl(currentOrigin);
+      if (currentOrigin.startsWith('https://') || !currentOrigin.includes('localhost')) {
+        setIsProduction(true);
+      }
+    }
+
     fetch('/api/network-ip')
       .then((res) => res.json())
       .then((data) => {
-        if (data.lanHttpsUrl) {
-          setLanHttpsUrl(data.lanHttpsUrl);
-          setSelectedBaseUrl(data.lanHttpsUrl); // Default to HTTPS for mobile
-        }
-        if (data.lanHttpUrl) {
-          setLanHttpUrl(data.lanHttpUrl);
+        if (data.isProduction && data.currentOrigin) {
+          setSelectedBaseUrl(data.currentOrigin);
+          setIsProduction(true);
+        } else if (data.lanHttpUrl) {
+          // If on local development, offer LAN IP
+          if (!window.location.origin.startsWith('https://')) {
+            setSelectedBaseUrl(data.lanHttpUrl);
+          }
         }
         if (data.allIps) {
           setAvailableIps(data.allIps);
         }
       })
       .catch(() => {
-        const origin = window.location.origin;
-        setLanHttpUrl(origin);
-        setSelectedBaseUrl(origin);
+        if (typeof window !== 'undefined') {
+          setSelectedBaseUrl(window.location.origin);
+        }
       });
   }, []);
 
-  // Compute the exact link to encode in QR code
   const currentBaseUrl = customHost.trim() || selectedBaseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
   const shareableUrl = roomId ? `${currentBaseUrl}/share?room=${roomId}` : '';
 
-  // Initialize Socket.io and WebRTC setup
   useEffect(() => {
     if (!roomId) return;
 
@@ -280,7 +285,6 @@ export default function HostDashboard() {
       <Navbar />
 
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        {/* Top Header Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-slate-800/80">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
@@ -299,7 +303,6 @@ export default function HostDashboard() {
             </div>
           </div>
 
-          {/* Connection Status Pill */}
           <div className="flex items-center gap-2.5">
             <div
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border ${
@@ -330,10 +333,7 @@ export default function HostDashboard() {
           </div>
         </div>
 
-        {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          
-          {/* Main Video Viewport */}
           <div className="lg:col-span-2 flex flex-col gap-4">
             <div
               ref={containerRef}
@@ -360,7 +360,7 @@ export default function HostDashboard() {
 
                   <h3 className="text-xl font-bold text-white mb-2">No Active Screen Stream</h3>
                   <p className="text-slate-400 text-sm max-w-md mb-6 leading-relaxed">
-                    Scan the QR code on the right with your phone to begin mirroring your mobile screen.
+                    Scan the QR code on the right with your phone camera to begin sharing your mobile screen.
                   </p>
 
                   <div className="flex items-center gap-3 text-xs text-slate-500">
@@ -462,7 +462,6 @@ export default function HostDashboard() {
             </div>
           </div>
 
-          {/* Right Side: QR Code & Connection Settings Card */}
           <div className="glass-panel rounded-2xl p-6 border border-slate-800/80 flex flex-col gap-6">
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -470,16 +469,15 @@ export default function HostDashboard() {
                   <QrCode className="w-5 h-5 text-cyan-400" />
                   Mobile Connection QR
                 </h3>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 flex items-center gap-1">
-                  <Lock className="w-3 h-3" /> HTTPS Ready
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> Safari & Chrome Ready
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Scan this with your mobile phone camera or barcode scanner.
+                Scan this with your mobile phone camera to start casting.
               </p>
             </div>
 
-            {/* QR Code Canvas Box */}
             <div className="flex flex-col items-center justify-center p-6 bg-white rounded-2xl shadow-xl">
               {shareableUrl ? (
                 <QRCodeSVG
@@ -501,12 +499,11 @@ export default function HostDashboard() {
               </div>
             </div>
 
-            {/* Direct Link Share & Copy */}
             <div className="space-y-2">
               <label className="text-xs text-slate-300 font-medium flex items-center justify-between">
                 <span>Direct Share URL:</span>
                 <span className="text-[10px] text-cyan-400 font-mono font-semibold">
-                  {selectedBaseUrl.startsWith('https') ? '🔒 HTTPS Secure' : 'HTTP'}
+                  {currentBaseUrl.startsWith('https') ? '🔒 HTTPS Secure' : 'HTTP'}
                 </span>
               </label>
               <div className="flex gap-2">
@@ -526,58 +523,34 @@ export default function HostDashboard() {
               </div>
             </div>
 
-            {/* Network Protocol / URL Selector */}
+            {/* Host URL / Tunnel configuration */}
             <div className="space-y-2 border-t border-slate-800/80 pt-4">
               <label className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
-                <Wifi className="w-3.5 h-3.5 text-indigo-400" />
-                Connection Protocol / Host URL:
+                <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                Current Domain / Base URL:
               </label>
               
               <div className="space-y-2">
-                <select
-                  value={selectedBaseUrl}
-                  onChange={(e) => {
-                    setSelectedBaseUrl(e.target.value);
-                    setCustomHost('');
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                >
-                  {lanHttpsUrl && (
-                    <option value={lanHttpsUrl}>
-                      🔒 HTTPS (Recommended for Mobile) - {lanHttpsUrl}
-                    </option>
-                  )}
-                  {lanHttpUrl && (
-                    <option value={lanHttpUrl}>
-                      🌐 HTTP (Local Network) - {lanHttpUrl}
-                    </option>
-                  )}
-                  <option value="http://localhost:3000">Localhost (http://localhost:3000)</option>
-                </select>
-
                 <input
                   type="text"
-                  placeholder="Or custom Tunnel URL (e.g. https://xyz.ngrok-free.app)"
-                  value={customHost}
+                  placeholder="e.g. https://your-app.onrender.com"
+                  value={customHost || selectedBaseUrl}
                   onChange={(e) => setCustomHost(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
-              {/* Mobile HTTPS tip */}
               <div className="flex flex-col gap-1.5 mt-2 text-[11px] text-slate-400 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                <div className="flex items-center gap-1.5 font-semibold text-cyan-300">
-                  <Shield className="w-3.5 h-3.5 text-cyan-400" />
-                  Mobile Browser HTTPS Tip:
+                <div className="flex items-center gap-1.5 font-semibold text-emerald-300">
+                  <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                  Cloud Deployment (HTTPS):
                 </div>
                 <p className="leading-relaxed text-slate-300">
-                  Jab aap phone se HTTPS QR code scan karenge, toh browser <em>&quot;Your connection is not private&quot;</em> dikhayega. 
-                  Bas <strong>Advanced &rarr; Proceed to {lanHttpsUrl.replace('https://', '')} (unsafe)</strong> tap karein. Is se mobile screen sharing 100% unlock ho jayegi!
+                  Jab yeh app <strong>Render / Railway</strong> par deploy hogi, toh Safari aur Chrome par bina kisi warning ke screen share allow ho jayegi.
                 </p>
               </div>
             </div>
 
-            {/* Test Link Button */}
             <div className="pt-1">
               <a
                 href={shareableUrl}
