@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { io } from 'socket.io-client';
 import Navbar from '../../components/Navbar';
-import { createPeerConnection, STREAM_PRESETS } from '../../lib/webrtc';
+import { createPeerConnection } from '../../lib/webrtc';
 import {
   Smartphone,
   Cast,
@@ -20,9 +20,9 @@ import {
   Volume2,
   Lock,
   Camera,
-  Apple,
   Info,
-  Layers
+  Layers,
+  HelpCircle
 } from 'lucide-react';
 
 function ShareContent() {
@@ -35,12 +35,12 @@ function ShareContent() {
   const [streamType, setStreamType] = useState('screen'); // 'screen' or 'camera'
   const [cameraFacing, setCameraFacing] = useState('environment'); // 'user' or 'environment'
   const [errorMsg, setErrorMsg] = useState('');
-  const [qualityPreset, setQualityPreset] = useState('medium');
   const [includeAudio, setIncludeAudio] = useState(false);
   const [streamDuration, setStreamDuration] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [hasScreenApi, setHasScreenApi] = useState(true);
+  const [browserInfo, setBrowserInfo] = useState('');
 
   const socketRef = useRef(null);
   const pcRef = useRef(null);
@@ -49,10 +49,14 @@ function ShareContent() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const ua = navigator.userAgent;
+      const isIOS = /iPhone|iPad|iPod/i.test(ua);
       setIsIOSDevice(isIOS);
-      const hasDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+      setBrowserInfo(ua);
+
+      const hasDisplayMedia = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
       setHasScreenApi(hasDisplayMedia);
+      
       if (!hasDisplayMedia && isIOS) {
         setStreamType('camera');
       }
@@ -144,27 +148,34 @@ function ShareContent() {
       let stream = null;
 
       if (type === 'screen') {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
           throw new Error(
-            'Apple iOS Safari restricts web-based screen capture. Use Live Camera stream or test on Android/Laptop!'
+            'getDisplayMedia is not available on this mobile browser. Try Android Chrome or switch to Live Camera mode below!'
           );
         }
 
-        const preset = STREAM_PRESETS[qualityPreset] || STREAM_PRESETS.medium;
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: preset.video,
-          audio: includeAudio,
-        });
+        // Mobile-safe clean constraints (avoids OverconstrainedError on portrait screens)
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: includeAudio,
+          });
+        } catch (constraintErr) {
+          console.warn('[Sender] Retrying with basic video constraint...', constraintErr);
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        }
       } else {
-        // Camera streaming mode (100% supported on iOS Safari & Android)
+        // Camera streaming mode (Works on all Android & iOS devices)
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: cameraFacing,
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
           },
           audio: includeAudio,
         });
+      }
+
+      if (!stream) {
+        throw new Error('No media stream returned from device.');
       }
 
       streamRef.current = stream;
@@ -189,9 +200,11 @@ function ShareContent() {
     } catch (err) {
       console.error('[Sender] Error starting stream:', err);
       if (err.name === 'NotAllowedError') {
-        setErrorMsg('Permission was declined by user.');
+        setErrorMsg('Screen/Camera permission was cancelled by user.');
+      } else if (err.name === 'OverconstrainedError') {
+        setErrorMsg('Device display constraints mismatch. Retrying in basic mode...');
       } else {
-        setErrorMsg(err.message || 'Failed to start stream.');
+        setErrorMsg(`${err.name || 'Error'}: ${err.message || 'Failed to start stream'}`);
       }
     }
   };
@@ -230,27 +243,29 @@ function ShareContent() {
           </div>
         </div>
 
-        {/* iOS Notice Box if on iPhone */}
-        {isIOSDevice && !hasScreenApi && (
-          <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4 mb-6 text-xs text-indigo-200">
-            <div className="flex items-center gap-2 font-semibold mb-1 text-cyan-300">
-              <Info className="w-4 h-4 text-cyan-400" />
-              <span>Apple iOS Browser Policy</span>
-            </div>
-            <p className="leading-relaxed text-slate-300 mb-2">
-              Apple iOS Safari security blocks web pages from capturing other apps. You can stream your <strong>Live Camera</strong> here, or test full OS screen sharing on <strong>Android Chrome / Laptop</strong>!
-            </p>
-          </div>
-        )}
-
         {/* Error Notification */}
         {errorMsg && (
-          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 mb-6 text-xs text-rose-200 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold mb-0.5">Stream Notice</p>
-              <p className="leading-relaxed">{errorMsg}</p>
+          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 mb-6 text-xs text-rose-200 flex flex-col gap-2">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Broadcast Notice</p>
+                <p className="leading-relaxed">{errorMsg}</p>
+              </div>
             </div>
+
+            {streamType === 'screen' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStreamType('camera');
+                  startStream('camera');
+                }}
+                className="mt-2 py-2 px-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-center transition-colors"
+              >
+                Switch to Live Camera Stream (100% Supported)
+              </button>
+            )}
           </div>
         )}
 
@@ -280,27 +295,33 @@ function ShareContent() {
                 <div className="w-full mb-6 space-y-4">
                   {/* Stream Mode Switcher */}
                   <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-left text-xs">
-                    <span className="text-slate-400 font-medium block mb-2">Broadcast Source:</span>
+                    <span className="text-slate-400 font-medium block mb-2">Choose Broadcast Mode:</span>
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={() => setStreamType('screen')}
+                        onClick={() => {
+                          setStreamType('screen');
+                          setErrorMsg('');
+                        }}
                         className={`py-2 px-3 rounded-lg border flex items-center justify-center gap-2 font-medium transition-all ${
                           streamType === 'screen'
-                            ? 'bg-indigo-600/30 border-indigo-500 text-white'
+                            ? 'bg-indigo-600/30 border-indigo-500 text-white shadow-md shadow-indigo-500/20'
                             : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
                         <Cast className="w-4 h-4 text-cyan-400" />
-                        <span>Screen Cast</span>
+                        <span>Screen Mirror</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => setStreamType('camera')}
+                        onClick={() => {
+                          setStreamType('camera');
+                          setErrorMsg('');
+                        }}
                         className={`py-2 px-3 rounded-lg border flex items-center justify-center gap-2 font-medium transition-all ${
                           streamType === 'camera'
-                            ? 'bg-cyan-600/30 border-cyan-500 text-white'
+                            ? 'bg-cyan-600/30 border-cyan-500 text-white shadow-md shadow-cyan-500/20'
                             : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
@@ -310,95 +331,51 @@ function ShareContent() {
                     </div>
 
                     {streamType === 'camera' && (
-                      <div className="mt-3 flex items-center justify-between text-[11px] text-slate-300">
-                        <span>Camera Facing:</span>
+                      <div className="mt-3 flex items-center justify-between text-[11px] text-slate-300 pt-2 border-t border-slate-800/80">
+                        <span>Select Camera:</span>
                         <div className="flex gap-2">
                           <button
                             type="button"
                             onClick={() => setCameraFacing('environment')}
-                            className={`px-2 py-1 rounded border text-[10px] ${
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium ${
                               cameraFacing === 'environment'
                                 ? 'bg-cyan-600 text-white border-cyan-500'
                                 : 'bg-slate-950 border-slate-800 text-slate-400'
                             }`}
                           >
-                            Back Camera
+                            Back Lens
                           </button>
                           <button
                             type="button"
                             onClick={() => setCameraFacing('user')}
-                            className={`px-2 py-1 rounded border text-[10px] ${
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium ${
                               cameraFacing === 'user'
                                 ? 'bg-cyan-600 text-white border-cyan-500'
                                 : 'bg-slate-950 border-slate-800 text-slate-400'
                             }`}
                           >
-                            Front Selfie
+                            Front Lens
                           </button>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Quality Settings */}
-                  <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800 text-left text-xs">
-                    <div className="flex items-center justify-between text-slate-300 font-semibold mb-2">
-                      <span className="flex items-center gap-1.5">
-                        <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                        Quality Preset
-                      </span>
-                      <span className="text-[10px] text-slate-500 uppercase">{qualityPreset}</span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setQualityPreset('batterySaver')}
-                        className={`py-1.5 px-2 rounded-lg border text-center font-medium transition-all ${
-                          qualityPreset === 'batterySaver'
-                            ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400'
-                        }`}
-                      >
-                        480p Fast
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setQualityPreset('medium')}
-                        className={`py-1.5 px-2 rounded-lg border text-center font-medium transition-all ${
-                          qualityPreset === 'medium'
-                            ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400'
-                        }`}
-                      >
-                        720p HD
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setQualityPreset('high')}
-                        className={`py-1.5 px-2 rounded-lg border text-center font-medium transition-all ${
-                          qualityPreset === 'high'
-                            ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400'
-                        }`}
-                      >
-                        1080p FHD
-                      </button>
-                    </div>
-
-                    <label className="flex items-center gap-2 mt-3 cursor-pointer text-slate-300 select-none">
+                  {/* Audio Toggle */}
+                  <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-left text-xs">
+                    <label className="flex items-center gap-2.5 cursor-pointer text-slate-300 select-none">
                       <input
                         type="checkbox"
                         checked={includeAudio}
                         onChange={(e) => setIncludeAudio(e.target.checked)}
                         className="rounded bg-slate-950 border-slate-700 text-cyan-500 focus:ring-0"
                       />
-                      <span>Include Device / Mic Audio</span>
+                      <span>Include Audio Stream (Microphone / System)</span>
                     </label>
                   </div>
                 </div>
 
-                {/* Big Glowing Broadcast Button */}
+                {/* Main Action Button */}
                 <button
                   onClick={() => startStream(streamType)}
                   className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-indigo-500 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-lg flex items-center justify-center gap-3 shadow-xl shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-95 transition-all duration-200"
@@ -406,18 +383,20 @@ function ShareContent() {
                   {streamType === 'screen' ? (
                     <>
                       <Cast className="w-6 h-6 animate-pulse" />
-                      <span>Start Sharing Screen</span>
+                      <span>Start Screen Mirroring</span>
                     </>
                   ) : (
                     <>
                       <Camera className="w-6 h-6 animate-pulse" />
-                      <span>Start Live Camera Cast</span>
+                      <span>Start Camera Broadcast</span>
                     </>
                   )}
                 </button>
 
                 <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
-                  Your browser will ask for confirmation before broadcasting.
+                  {streamType === 'screen'
+                    ? 'Android will show a system dialog: Tap "Start now" to mirror full screen.'
+                    : 'Your browser will prompt for camera access.'}
                 </p>
               </>
             ) : (
@@ -432,7 +411,7 @@ function ShareContent() {
 
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-3">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>BROADCASTING LIVE ({streamType.toUpperCase()})</span>
+                  <span>LIVE ({streamType === 'screen' ? 'SCREEN MIRROR' : 'CAMERA'})</span>
                 </div>
 
                 <div className="flex items-center gap-1.5 text-2xl font-mono font-bold text-white mb-6">
@@ -443,7 +422,7 @@ function ShareContent() {
                 <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 text-xs text-slate-300 mb-6 text-left w-full space-y-2">
                   <p className="flex items-center gap-2 font-medium text-emerald-400">
                     <CheckCircle className="w-4 h-4 shrink-0" />
-                    Live video stream is active on Host Monitor!
+                    Stream is actively playing on Host Monitor!
                   </p>
                 </div>
 
@@ -452,18 +431,18 @@ function ShareContent() {
                   className="w-full py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
                 >
                   <StopCircle className="w-5 h-5" />
-                  <span>Stop Broadcasting</span>
+                  <span>Stop Stream</span>
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {/* Security Notice */}
+        {/* Security / Help Notice */}
         <div className="glass-panel p-4 rounded-xl border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
           <span>
-            <strong>P2P Direct WebRTC:</strong> Encrypted direct streaming between your phone and laptop screen.
+            <strong>P2P Direct WebRTC:</strong> Peer-to-peer encrypted media streaming directly to host display.
           </span>
         </div>
       </main>
