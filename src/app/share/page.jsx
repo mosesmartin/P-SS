@@ -19,8 +19,10 @@ import {
   Sliders,
   Volume2,
   Lock,
-  RefreshCw,
-  ExternalLink
+  Camera,
+  Apple,
+  Info,
+  Layers
 } from 'lucide-react';
 
 function ShareContent() {
@@ -30,12 +32,15 @@ function ShareContent() {
   const [roomId, setRoomId] = useState(roomQuery);
   const [joined, setJoined] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [streamType, setStreamType] = useState('screen'); // 'screen' or 'camera'
+  const [cameraFacing, setCameraFacing] = useState('environment'); // 'user' or 'environment'
   const [errorMsg, setErrorMsg] = useState('');
-  const [qualityPreset, setQualityPreset] = useState('medium'); // high, medium, batterySaver
+  const [qualityPreset, setQualityPreset] = useState('medium');
   const [includeAudio, setIncludeAudio] = useState(false);
   const [streamDuration, setStreamDuration] = useState(0);
-  const [connectionStatus, setConnectionStatus] = useState('connecting'); // connecting, ready, sharing, error
-  const [isSecure, setIsSecure] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState('connecting');
+  const [isIOSDevice, setIsIOSDevice] = useState(false);
+  const [hasScreenApi, setHasScreenApi] = useState(true);
 
   const socketRef = useRef(null);
   const pcRef = useRef(null);
@@ -44,18 +49,22 @@ function ShareContent() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      setIsSecure(window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      setIsIOSDevice(isIOS);
+      const hasDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+      setHasScreenApi(hasDisplayMedia);
+      if (!hasDisplayMedia && isIOS) {
+        setStreamType('camera');
+      }
     }
   }, []);
 
-  // Update room from query param
   useEffect(() => {
     if (roomQuery) {
       setRoomId(roomQuery);
     }
   }, [roomQuery]);
 
-  // Connect to Signaling Server & Join Room
   useEffect(() => {
     if (!roomId) return;
 
@@ -71,19 +80,17 @@ function ShareContent() {
       setConnectionStatus('ready');
     });
 
-    // Create RTCPeerConnection
     const pc = createPeerConnection(
       (candidate) => {
         socket.emit('ice-candidate', { roomId, candidate });
       },
-      null, // Sender doesn't need to receive remote video
+      null,
       (state) => {
         console.log('[Sender] Connection state:', state);
       }
     );
     pcRef.current = pc;
 
-    // Receive Answer from Host
     socket.on('answer', async ({ answer }) => {
       try {
         console.log('[Sender] Received Answer from Host');
@@ -93,7 +100,6 @@ function ShareContent() {
       }
     });
 
-    // Receive ICE candidate from Host
     socket.on('ice-candidate', async ({ candidate }) => {
       try {
         if (candidate && pc.remoteDescription) {
@@ -105,13 +111,12 @@ function ShareContent() {
     });
 
     return () => {
-      stopScreenShare();
+      stopStream();
       socket.disconnect();
       pc.close();
     };
   }, [roomId]);
 
-  // Timer logic for active streaming
   useEffect(() => {
     if (isSharing) {
       setStreamDuration(0);
@@ -132,40 +137,47 @@ function ShareContent() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Start Screen Share action
-  const startScreenShare = async () => {
+  // Start Stream (Screen or Camera)
+  const startStream = async (type = streamType) => {
     setErrorMsg('');
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-        throw new Error(
-          'Screen Capture API is not supported on this browser or requires an HTTPS connection.'
-        );
+      let stream = null;
+
+      if (type === 'screen') {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          throw new Error(
+            'Apple iOS Safari restricts web-based screen capture. Use Live Camera stream or test on Android/Laptop!'
+          );
+        }
+
+        const preset = STREAM_PRESETS[qualityPreset] || STREAM_PRESETS.medium;
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: preset.video,
+          audio: includeAudio,
+        });
+      } else {
+        // Camera streaming mode (100% supported on iOS Safari & Android)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: cameraFacing,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: includeAudio,
+        });
       }
 
-      const preset = STREAM_PRESETS[qualityPreset] || STREAM_PRESETS.medium;
-      const constraints = {
-        video: preset.video,
-        audio: includeAudio,
-      };
-
-      console.log('[Sender] Requesting display media with constraints:', constraints);
-      const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
       streamRef.current = stream;
-
       const pc = pcRef.current;
       const socket = socketRef.current;
 
-      // Add media tracks to WebRTC PeerConnection
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
-
-        // When user stops sharing from OS notification bar
         track.onended = () => {
-          stopScreenShare();
+          stopStream();
         };
       });
 
-      // Create WebRTC Offer
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
@@ -175,17 +187,16 @@ function ShareContent() {
       setIsSharing(true);
       setConnectionStatus('sharing');
     } catch (err) {
-      console.error('[Sender] Error starting screen share:', err);
+      console.error('[Sender] Error starting stream:', err);
       if (err.name === 'NotAllowedError') {
-        setErrorMsg('Screen share permission was declined by user.');
+        setErrorMsg('Permission was declined by user.');
       } else {
-        setErrorMsg(err.message || 'Failed to initialize screen sharing.');
+        setErrorMsg(err.message || 'Failed to start stream.');
       }
     }
   };
 
-  // Stop Screen Share action
-  const stopScreenShare = () => {
+  const stopStream = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -208,9 +219,9 @@ function ShareContent() {
             <Smartphone className="w-7 h-7" />
           </div>
 
-          <h1 className="text-2xl font-bold text-white mb-1">Mobile Screen Presenter</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">Mobile Presenter</h1>
           <p className="text-xs text-slate-400">
-            Broadcast your phone screen to the Host Monitor live in HD.
+            Broadcast live from your phone to the Host Monitor in real-time.
           </p>
 
           <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-300">
@@ -219,16 +230,16 @@ function ShareContent() {
           </div>
         </div>
 
-        {/* Insecure Context Warning (if not HTTPS / localhost) */}
-        {!isSecure && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6 text-xs text-amber-200 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold mb-1">HTTPS Security Requirement</p>
-              <p className="leading-relaxed text-amber-300/90">
-                Mobile browsers require an <strong>HTTPS connection</strong> (e.g. ngrok tunnel) or localhost to allow screen capture permissions.
-              </p>
+        {/* iOS Notice Box if on iPhone */}
+        {isIOSDevice && !hasScreenApi && (
+          <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4 mb-6 text-xs text-indigo-200">
+            <div className="flex items-center gap-2 font-semibold mb-1 text-cyan-300">
+              <Info className="w-4 h-4 text-cyan-400" />
+              <span>Apple iOS Browser Policy</span>
             </div>
+            <p className="leading-relaxed text-slate-300 mb-2">
+              Apple iOS Safari security blocks web pages from capturing other apps. You can stream your <strong>Live Camera</strong> here, or test full OS screen sharing on <strong>Android Chrome / Laptop</strong>!
+            </p>
           </div>
         )}
 
@@ -237,13 +248,13 @@ function ShareContent() {
           <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 mb-6 text-xs text-rose-200 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold mb-0.5">Stream Error</p>
+              <p className="font-semibold mb-0.5">Stream Notice</p>
               <p className="leading-relaxed">{errorMsg}</p>
             </div>
           </div>
         )}
 
-        {/* Room Code Input (if not joined from QR) */}
+        {/* Room Code Input */}
         {!roomId && (
           <div className="glass-panel rounded-2xl p-6 border border-slate-800 mb-6">
             <label className="block text-xs text-slate-300 font-medium mb-2">
@@ -266,9 +277,71 @@ function ShareContent() {
           <div className="glass-panel-glow rounded-2xl p-6 border border-slate-800 mb-6 flex flex-col items-center text-center">
             {!isSharing ? (
               <>
-                <div className="w-full mb-6">
-                  {/* Quality Settings Accordion */}
-                  <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800 text-left text-xs mb-4">
+                <div className="w-full mb-6 space-y-4">
+                  {/* Stream Mode Switcher */}
+                  <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-left text-xs">
+                    <span className="text-slate-400 font-medium block mb-2">Broadcast Source:</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setStreamType('screen')}
+                        className={`py-2 px-3 rounded-lg border flex items-center justify-center gap-2 font-medium transition-all ${
+                          streamType === 'screen'
+                            ? 'bg-indigo-600/30 border-indigo-500 text-white'
+                            : 'bg-slate-950 border-slate-800 text-slate-400'
+                        }`}
+                      >
+                        <Cast className="w-4 h-4 text-cyan-400" />
+                        <span>Screen Cast</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setStreamType('camera')}
+                        className={`py-2 px-3 rounded-lg border flex items-center justify-center gap-2 font-medium transition-all ${
+                          streamType === 'camera'
+                            ? 'bg-cyan-600/30 border-cyan-500 text-white'
+                            : 'bg-slate-950 border-slate-800 text-slate-400'
+                        }`}
+                      >
+                        <Camera className="w-4 h-4 text-emerald-400" />
+                        <span>Live Camera</span>
+                      </button>
+                    </div>
+
+                    {streamType === 'camera' && (
+                      <div className="mt-3 flex items-center justify-between text-[11px] text-slate-300">
+                        <span>Camera Facing:</span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setCameraFacing('environment')}
+                            className={`px-2 py-1 rounded border text-[10px] ${
+                              cameraFacing === 'environment'
+                                ? 'bg-cyan-600 text-white border-cyan-500'
+                                : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            Back Camera
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCameraFacing('user')}
+                            className={`px-2 py-1 rounded border text-[10px] ${
+                              cameraFacing === 'user'
+                                ? 'bg-cyan-600 text-white border-cyan-500'
+                                : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            Front Selfie
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Quality Settings */}
+                  <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800 text-left text-xs">
                     <div className="flex items-center justify-between text-slate-300 font-semibold mb-2">
                       <span className="flex items-center gap-1.5">
                         <Sliders className="w-3.5 h-3.5 text-cyan-400" />
@@ -284,10 +357,10 @@ function ShareContent() {
                         className={`py-1.5 px-2 rounded-lg border text-center font-medium transition-all ${
                           qualityPreset === 'batterySaver'
                             ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                            : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
-                        480p (Fast)
+                        480p Fast
                       </button>
                       <button
                         type="button"
@@ -295,7 +368,7 @@ function ShareContent() {
                         className={`py-1.5 px-2 rounded-lg border text-center font-medium transition-all ${
                           qualityPreset === 'medium'
                             ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                            : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
                         720p HD
@@ -306,7 +379,7 @@ function ShareContent() {
                         className={`py-1.5 px-2 rounded-lg border text-center font-medium transition-all ${
                           qualityPreset === 'high'
                             ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                            : 'bg-slate-950 border-slate-800 text-slate-400'
                         }`}
                       >
                         1080p FHD
@@ -320,22 +393,31 @@ function ShareContent() {
                         onChange={(e) => setIncludeAudio(e.target.checked)}
                         className="rounded bg-slate-950 border-slate-700 text-cyan-500 focus:ring-0"
                       />
-                      <span>Include Device / System Audio (if supported)</span>
+                      <span>Include Device / Mic Audio</span>
                     </label>
                   </div>
                 </div>
 
-                {/* Big Glowing Start Button */}
+                {/* Big Glowing Broadcast Button */}
                 <button
-                  onClick={startScreenShare}
+                  onClick={() => startStream(streamType)}
                   className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-indigo-500 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-lg flex items-center justify-center gap-3 shadow-xl shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-95 transition-all duration-200"
                 >
-                  <Cast className="w-6 h-6 animate-pulse" />
-                  <span>Start Sharing Screen</span>
+                  {streamType === 'screen' ? (
+                    <>
+                      <Cast className="w-6 h-6 animate-pulse" />
+                      <span>Start Sharing Screen</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-6 h-6 animate-pulse" />
+                      <span>Start Live Camera Cast</span>
+                    </>
+                  )}
                 </button>
 
                 <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
-                  Your browser will ask for confirmation before capturing your screen. You can stop sharing at any time.
+                  Your browser will ask for confirmation before broadcasting.
                 </p>
               </>
             ) : (
@@ -343,14 +425,14 @@ function ShareContent() {
               <div className="w-full py-4 flex flex-col items-center">
                 <div className="relative mb-6">
                   <div className="w-20 h-20 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 animate-pulse">
-                    <Cast className="w-10 h-10" />
+                    {streamType === 'screen' ? <Cast className="w-10 h-10" /> : <Camera className="w-10 h-10" />}
                   </div>
                   <div className="absolute -inset-2 rounded-full border border-emerald-500/30 animate-ping"></div>
                 </div>
 
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-3">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>BROADCASTING LIVE</span>
+                  <span>BROADCASTING LIVE ({streamType.toUpperCase()})</span>
                 </div>
 
                 <div className="flex items-center gap-1.5 text-2xl font-mono font-bold text-white mb-6">
@@ -361,30 +443,27 @@ function ShareContent() {
                 <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 text-xs text-slate-300 mb-6 text-left w-full space-y-2">
                   <p className="flex items-center gap-2 font-medium text-emerald-400">
                     <CheckCircle className="w-4 h-4 shrink-0" />
-                    Screen is mirroring to Host Monitor!
-                  </p>
-                  <p className="text-slate-400 text-[11px]">
-                    💡 <strong>Tip:</strong> You can minimize this browser tab or switch to any other app on your phone. Your screen remains visible on the host screen.
+                    Live video stream is active on Host Monitor!
                   </p>
                 </div>
 
                 <button
-                  onClick={stopScreenShare}
+                  onClick={stopStream}
                   className="w-full py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
                 >
                   <StopCircle className="w-5 h-5" />
-                  <span>Stop Screen Sharing</span>
+                  <span>Stop Broadcasting</span>
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {/* Security & Privacy Notice */}
+        {/* Security Notice */}
         <div className="glass-panel p-4 rounded-xl border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
           <span>
-            <strong>Peer-to-Peer Encryption:</strong> All video streams flow directly between your phone and the host computer via WebRTC DTLS/SRTP encryption. No video data is recorded or stored on any intermediate server.
+            <strong>P2P Direct WebRTC:</strong> Encrypted direct streaming between your phone and laptop screen.
           </span>
         </div>
       </main>
