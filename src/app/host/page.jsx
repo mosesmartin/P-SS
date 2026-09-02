@@ -23,7 +23,6 @@ import {
   Lock,
   Globe,
   Settings,
-  ChevronRight,
   Eye,
   EyeOff,
   Sparkles,
@@ -37,7 +36,7 @@ export default function HostDashboard() {
   const [copied, setCopied] = useState(false);
   
   // Connection & Stream State
-  const [connectionState, setConnectionState] = useState('disconnected'); // disconnected, waiting, connected, streaming
+  const [connectionState, setConnectionState] = useState('disconnected');
   const [peerRole, setPeerRole] = useState(null);
   const [streamActive, setStreamActive] = useState(false);
   const [streamStats, setStreamStats] = useState({ width: 0, height: 0, fps: 0 });
@@ -275,27 +274,27 @@ export default function HostDashboard() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[#060911] text-slate-100 selection:bg-indigo-500 selection:text-white">
       {/* Top Header Bar */}
-      <header className="h-14 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl px-4 flex items-center justify-between shrink-0 z-50">
-        <div className="flex items-center gap-3">
+      <header className="h-14 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl px-3 sm:px-4 flex items-center justify-between shrink-0 z-50">
+        <div className="flex items-center gap-2 sm:gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-cyan-400 p-0.5 flex items-center justify-center shadow-md shadow-indigo-500/20">
             <div className="w-full h-full bg-slate-950 rounded-[6px] flex items-center justify-center">
               <Cast className="w-4 h-4 text-cyan-400" />
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <span className="font-bold text-sm text-white tracking-tight">
               Cast<span className="text-cyan-400">QR</span>
             </span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700 font-mono">
-              Room: {roomId || '...'}
+              {roomId || '...'}
             </span>
           </div>
         </div>
 
-        {/* Status Center Badges */}
-        <div className="flex items-center gap-2.5">
+        {/* Status Badges */}
+        <div className="flex items-center gap-2">
           <div
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full text-xs font-medium border transition-all ${
               streamActive
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-sm shadow-emerald-500/20'
                 : connectionState === 'connected'
@@ -312,37 +311,37 @@ export default function HostDashboard() {
                   : 'bg-amber-400 animate-pulse'
               }`}
             ></span>
-            <span className="text-[11px]">
+            <span className="text-[10px] sm:text-[11px] font-medium">
               {streamActive
-                ? 'LIVE BROADCAST'
+                ? 'LIVE'
                 : connectionState === 'connected'
-                ? 'Device Connected'
-                : 'Waiting for QR Scan'}
+                ? 'Ready'
+                : 'Waiting'}
             </span>
           </div>
 
           {streamActive && (
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300">
-              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300">
+              <Clock className="w-3 h-3 text-cyan-400" />
               <span>{formatTime(streamDuration)}</span>
             </div>
           )}
         </div>
 
         {/* Quick Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {streamActive && (
             <button
               onClick={() => setCinemaMode(!cinemaMode)}
-              title={cinemaMode ? 'Show QR Sidebar' : 'Cinema Mode (Full Width)'}
-              className={`p-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors ${
+              title={cinemaMode ? 'Show QR Sidebar' : 'Cinema View'}
+              className={`p-1.5 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
                 cinemaMode
                   ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
                   : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
               }`}
             >
               {cinemaMode ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              <span className="hidden md:inline">{cinemaMode ? 'Show Panel' : 'Cinema View'}</span>
+              <span className="hidden md:inline">{cinemaMode ? 'Show QR' : 'Cinema'}</span>
             </button>
           )}
 
@@ -350,24 +349,24 @@ export default function HostDashboard() {
             href={shareableUrl}
             target="_blank"
             rel="noreferrer"
-            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition-all"
+            className="px-2.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 text-xs font-medium flex items-center gap-1 transition-all"
           >
-            <span>Open Sender</span>
+            <span>Sender</span>
             <ExternalLink className="w-3 h-3 text-cyan-400" />
           </a>
         </div>
       </header>
 
-      {/* Main Viewport Grid: 100vh Zero-Scroll */}
-      <main className="flex-1 p-3 sm:p-4 flex gap-4 overflow-hidden relative">
+      {/* Main Viewport: Responsive for Mobile, Tablet, and Desktop */}
+      <main className="flex-1 p-2 sm:p-4 flex flex-col lg:flex-row gap-3 sm:gap-4 overflow-hidden relative">
         
-        {/* Left Video Container: Expands to fit 100% available viewport */}
+        {/* Main Center/Left Box (Video or Centered QR on Mobile when inactive) */}
         <div className="flex-1 flex flex-col h-full min-w-0">
           <div
             ref={containerRef}
             className="w-full h-full rounded-2xl overflow-hidden border border-slate-800/80 bg-slate-950 flex items-center justify-center relative shadow-2xl group"
           >
-            {/* The Live Video Element */}
+            {/* Live Video */}
             <video
               ref={videoRef}
               autoPlay
@@ -378,29 +377,72 @@ export default function HostDashboard() {
               }`}
             />
 
-            {/* Waiting Radar Placeholder when not streaming */}
+            {/* Inactive State: Displays QR Code directly on Mobile & Desktop placeholder */}
             {!streamActive && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 select-none">
-                <div className="relative mb-5">
-                  <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 animate-pulse shadow-xl shadow-indigo-500/10">
-                    <Smartphone className="w-8 h-8" />
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 sm:p-6 text-center z-10 select-none overflow-y-auto">
+                {/* Mobile / Tablet QR Centered View */}
+                <div className="lg:hidden flex flex-col items-center justify-center w-full max-w-xs">
+                  <div className="p-3 bg-white rounded-2xl shadow-2xl mb-3">
+                    {shareableUrl ? (
+                      <QRCodeSVG
+                        value={shareableUrl}
+                        size={170}
+                        level="M"
+                        includeMargin={false}
+                        className="rounded-lg"
+                      />
+                    ) : (
+                      <div className="w-[170px] h-[170px] flex items-center justify-center text-slate-400 text-xs">
+                        Generating QR...
+                      </div>
+                    )}
                   </div>
-                  <div className="absolute -inset-2 rounded-2xl border border-cyan-500/20 animate-ping pointer-events-none"></div>
+
+                  <h3 className="text-base font-bold text-white mb-1">Scan to Mirror Screen</h3>
+                  <p className="text-slate-400 text-[11px] mb-3">
+                    Scan with your camera or tap below to copy share link:
+                  </p>
+
+                  <div className="flex w-full gap-1.5 mb-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={shareableUrl}
+                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-slate-300 select-all focus:outline-none truncate"
+                    />
+                    <button
+                      onClick={copyToClipboard}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 transition-colors shrink-0"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copied ? 'Done' : 'Copy'}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <h3 className="text-lg sm:text-xl font-bold text-white mb-1.5">Awaiting Screen Broadcast</h3>
-                <p className="text-slate-400 text-xs sm:text-sm max-w-sm mb-4 leading-relaxed">
-                  Scan the QR code on the right with your phone or launch the sender tab to begin mirroring.
-                </p>
+                {/* Desktop Waiting Placeholder */}
+                <div className="hidden lg:flex flex-col items-center">
+                  <div className="relative mb-5">
+                    <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 animate-pulse shadow-xl shadow-indigo-500/10">
+                      <Smartphone className="w-8 h-8" />
+                    </div>
+                    <div className="absolute -inset-2 rounded-2xl border border-cyan-500/20 animate-ping pointer-events-none"></div>
+                  </div>
 
-                <div className="flex items-center gap-3 text-[11px] text-slate-500 bg-slate-900/60 px-3.5 py-1.5 rounded-full border border-slate-800">
-                  <span className="flex items-center gap-1.5 text-cyan-400">
-                    <Radio className="w-3 h-3 animate-pulse" /> WebRTC P2P
-                  </span>
-                  <span>•</span>
-                  <span className="flex items-center gap-1.5 text-emerald-400">
-                    <Shield className="w-3 h-3" /> Zero Latency
-                  </span>
+                  <h3 className="text-lg sm:text-xl font-bold text-white mb-1.5">Awaiting Screen Broadcast</h3>
+                  <p className="text-slate-400 text-xs sm:text-sm max-w-sm mb-4 leading-relaxed">
+                    Scan the QR code on the right with your phone to begin live screen mirroring.
+                  </p>
+
+                  <div className="flex items-center gap-3 text-[11px] text-slate-500 bg-slate-900/60 px-3.5 py-1.5 rounded-full border border-slate-800">
+                    <span className="flex items-center gap-1.5 text-cyan-400">
+                      <Radio className="w-3 h-3 animate-pulse" /> WebRTC P2P
+                    </span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1.5 text-emerald-400">
+                      <Shield className="w-3 h-3" /> End-to-End Direct
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -473,7 +515,7 @@ export default function HostDashboard() {
           </div>
         </div>
 
-        {/* Right QR Side Panel (Hidden in Cinema Mode on Desktop) */}
+        {/* Right QR Sidebar (Desktop & Tablets in 2-col) */}
         {!cinemaMode && (
           <aside className="w-80 shrink-0 hidden lg:flex flex-col h-full rounded-2xl border border-slate-800/80 bg-slate-950/70 backdrop-blur-xl p-4 justify-between overflow-y-auto">
             <div className="space-y-4">
@@ -492,7 +534,7 @@ export default function HostDashboard() {
                 </p>
               </div>
 
-              {/* QR Canvas Box: Compact & Sharp */}
+              {/* QR Box */}
               <div className="flex flex-col items-center justify-center p-4 bg-white rounded-xl shadow-lg">
                 {shareableUrl ? (
                   <QRCodeSVG
@@ -514,7 +556,7 @@ export default function HostDashboard() {
                 </div>
               </div>
 
-              {/* Copy Direct Share URL */}
+              {/* Copy Direct URL */}
               <div className="space-y-1.5">
                 <label className="text-[11px] text-slate-300 font-medium flex items-center justify-between">
                   <span>Direct Share URL:</span>
@@ -539,7 +581,7 @@ export default function HostDashboard() {
                 </div>
               </div>
 
-              {/* Custom Domain Override (Compact) */}
+              {/* Custom Domain Override */}
               <div className="space-y-1 pt-2 border-t border-slate-800/80">
                 <label className="text-[11px] text-slate-400 font-medium">Domain Override (Optional):</label>
                 <input
@@ -552,7 +594,6 @@ export default function HostDashboard() {
               </div>
             </div>
 
-            {/* Quick Helper Tip at bottom of sidebar */}
             <div className="pt-3 border-t border-slate-800/80 text-[10px] text-slate-400 flex items-start gap-1.5">
               <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
               <span>
